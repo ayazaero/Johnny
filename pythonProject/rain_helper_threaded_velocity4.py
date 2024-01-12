@@ -160,10 +160,31 @@ def xbee_init(names):
 
     return xbee, remote_devicess, b
 
+def vel_filter_klmn(f, m, A, H, Q, P, R, dt):
+    x_hat=np.array([f[2, 0], f[0, 0], f[2, 1], f[0, 1], f[2, 2], f[0, 2]])
+    
+    position_measurement=m
+
+    x_hat_minus = A.dot(x_hat)
+    P_minus = A.dot(P).dot(A.T) + Q
+
+    # Update step
+    K = P_minus.dot(H.T).dot(np.linalg.inv(H.dot(P_minus).dot(H.T) + R))
+    x_hat = x_hat_minus + K.dot(position_measurement.reshape(-1, 1) - H.dot(x_hat_minus))
+    P = (np.eye(6) - K.dot(H)).dot(P_minus)
+
+    # Extract filtered position and velocity
+    filtered_position = np.array([x_hat[0, 0], x_hat[2, 0], x_hat[4, 0]])
+    filtered_velocity = np.array([x_hat[1, 0], x_hat[3, 0], x_hat[5, 0]])
+
+    return np.array([filtered_velocity, filtered_velocity, filtered_position, filtered_position])
+
 
 
 
 def vel_filter(f, m):
+    
+    
     y1 = f[0, :]
     y2 = f[1, :]
     x0 = m
@@ -258,6 +279,46 @@ class Server:
         self.data = dict()
         self.packet = None
         self.init_var()
+
+        self.dt=0.01
+        self.x_hat = np.zeros((6, 1))
+        self.P = np.eye(6)
+
+
+        stdDeviationProcess = 0.01  # Process noise standard deviation
+        stdDeviationMeasurement = 0.1  # Measurement noise standard deviation
+
+        # State transition matrix
+        self.A = np.array([
+            [1, self.dt, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0],
+            [0, 0, 1, self.dt, 0, 0],
+            [0, 0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 1, self.dt],
+            [0, 0, 0, 0, 0, 1]
+        ])
+
+        # Measurement matrix
+        self.H = np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        ])
+
+        # Process noise covariance
+        self.Q = np.array([
+            [stdDeviationProcess**2 * (self.dt**4) / 4.0, 0.0, 0.0, stdDeviationProcess**2 * (self.dt**3) / 2, 0.0, 0.0],
+            [0.0, stdDeviationProcess**2 * (self.dt**2), 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, stdDeviationProcess**2 * (self.dt**4) / 4.0, 0.0, 0.0, stdDeviationProcess**2 * (self.dt**3) / 2.0],
+            [stdDeviationProcess**2 * (self.dt**3) / 2, 0.0, 0.0, stdDeviationProcess**2 * (self.dt**2), 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, stdDeviationProcess**2 * (self.dt**4) / 4.0, 0.0],
+            [0.0, 0.0, stdDeviationProcess**2 * (self.dt**3) / 2.0, 0.0, 0.0, stdDeviationProcess**2 * (self.dt**2)]
+        ])
+
+        # Measurement noise covariance
+        self.R = np.diag([stdDeviationMeasurement**2, stdDeviationMeasurement**2, stdDeviationMeasurement**2])
+ 
+
 
 
         # Runs on a parallel thread all the time. It works for now, I don't know how
